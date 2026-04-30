@@ -1,0 +1,82 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile data",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "object"
+        }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Internal CRM record for a tracking a student (Owner only)",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "age": { "type": "number" },
+        "company": { "type": "string" },
+        "industry": { "type": "string" },
+        "jobTitle": { "type": "string" },
+        "course": { "type": "string" },
+        "payment": { "type": "string" },
+        "credits": { "type": "number" },
+        "refund": { "type": "string" },
+        "bookedLesson": { "type": "string" },
+        "studentType": { "type": "string" },
+        "country": { "type": "string" },
+        "startDate": { "type": "string" },
+        "platform": { "type": "string" },
+        "bonus": { "type": "string" },
+        "extra": { "type": "string" },
+        "email": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "createdAt": { "type": "object" },
+        "updatedAt": { "type": "object" }
+      },
+      "required": ["fullName", "email", "createdAt"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Student lesson booking",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["userId", "studentName", "studentEmail", "date", "time", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "User profiles"
+    },
+    "/bookings/{bookingId}": {
+      "schema": {
+        "$ref": "#/entities/Booking"
+      },
+      "description": "Student lesson bookings"
+    },
+    "/students/{studentDocId}": {
+      "schema": {
+        "$ref": "#/entities/Student"
+      },
+      "description": "Student tracking records managed by admins"
+    }
+  }
+}

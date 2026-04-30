@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.email == 'tebzaro12@gmail.com');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'createdAt']) && data.keys().size() == 2
+        && data.email is string && data.email.size() <= 200
+        && data.createdAt == request.time;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUser(incoming());
+      allow update, delete: if false;
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['fullName', 'email', 'createdAt']) 
+        && data.fullName is string && data.fullName.size() <= 300
+        && data.email is string && data.email.size() <= 200
+        && data.createdAt is timestamp
+        // Optionals
+        && (!('studentId' in data) || (data.studentId is string && data.studentId.size() <= 100))
+        && (!('age' in data) || (data.age is number && data.age >= 0 && data.age <= 150))
+        && (!('company' in data) || (data.company is string && data.company.size() <= 200))
+        && (!('industry' in data) || (data.industry is string && data.industry.size() <= 200))
+        && (!('jobTitle' in data) || (data.jobTitle is string && data.jobTitle.size() <= 200))
+        && (!('course' in data) || (data.course is string && data.course.size() <= 200))
+        && (!('payment' in data) || (data.payment is string && data.payment.size() <= 200))
+        && (!('credits' in data) || (data.credits is number && data.credits >= 0 && data.credits <= 100000))
+        && (!('refund' in data) || (data.refund is string && data.refund.size() <= 500))
+        && (!('bookedLesson' in data) || (data.bookedLesson is string && data.bookedLesson.size() <= 200))
+        && (!('studentType' in data) || (data.studentType is string && data.studentType.size() <= 200))
+        && (!('country' in data) || (data.country is string && data.country.size() <= 200))
+        && (!('startDate' in data) || (data.startDate is string && data.startDate.size() <= 200))
+        && (!('platform' in data) || (data.platform is string && data.platform.size() <= 200))
+        && (!('bonus' in data) || (data.bonus is string && data.bonus.size() <= 500))
+        && (!('extra' in data) || (data.extra is string && data.extra.size() <= 500))
+        && (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() <= 50))
+        && (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    match /students/{studentDocId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidId(studentDocId) && isValidStudent(incoming()) && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidStudent(incoming()) 
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['userId', 'studentName', 'studentEmail', 'date', 'time', 'status', 'createdAt'])
+        && data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid
+        && data.studentName is string && data.studentName.size() <= 300
+        && data.studentEmail is string && data.studentEmail.size() <= 200
+        && data.date is string && data.date.size() <= 20
+        && data.time is string && data.time.size() <= 20
+        && data.status is string && data.status.size() <= 50
+        && data.createdAt is timestamp;
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(bookingId) && isValidBooking(incoming()) && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidBooking(incoming())
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin();
+    }
+  }
+}
