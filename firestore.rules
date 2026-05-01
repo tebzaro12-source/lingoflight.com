@@ -27,15 +27,21 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return data.keys().hasAll(['email', 'createdAt']) && data.keys().size() == 2
+      return data.keys().hasAll(['email', 'createdAt'])
         && data.email is string && data.email.size() <= 200
-        && data.createdAt == request.time;
+        && data.createdAt is timestamp
+        && (!('hasPurchased' in data) || data.hasPurchased is bool);
     }
 
     match /users/{userId} {
       allow read: if isSignedIn() && request.auth.uid == userId;
-      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUser(incoming());
-      allow update, delete: if false;
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUser(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && request.auth.uid == userId 
+        && isValidUser(incoming())
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['hasPurchased']);
+      allow delete: if false;
     }
 
     function isValidStudent(data) {

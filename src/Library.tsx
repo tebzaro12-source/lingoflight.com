@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from './lib/AuthContext';
 import { Lock, FileText, Download, PlayCircle, FolderOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from './lib/firebase';
+import { Link } from 'react-router-dom';
 
 const materials = [
   {
@@ -52,8 +55,32 @@ const materials = [
 ];
 
 export default function LibraryPage() {
-  const { user, loading, signInWithGoogle } = useAuth();
+  const { user, loading: authLoading, signInWithGoogle } = useAuth();
   const [activeTab, setActiveTab] = useState(materials[0].program);
+  const [hasPurchased, setHasPurchased] = useState(false);
+  const [isCheckingPurchase, setIsCheckingPurchase] = useState(true);
+
+  useEffect(() => {
+    async function checkPurchase() {
+      if (!user) {
+        setIsCheckingPurchase(false);
+        return;
+      }
+      try {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists() && userDoc.data()?.hasPurchased) {
+          setHasPurchased(true);
+        }
+      } catch (e) {
+        console.error("Failed to check purchase status", e);
+      } finally {
+        setIsCheckingPurchase(false);
+      }
+    }
+    checkPurchase();
+  }, [user]);
+
+  const loading = authLoading || isCheckingPurchase;
 
   if (loading) {
     return (
@@ -63,7 +90,7 @@ export default function LibraryPage() {
     );
   }
 
-  if (!user) {
+  if (!user || !hasPurchased) {
     return (
       <main className="flex-grow pt-32 pb-24 bg-brand-50 min-h-screen overflow-hidden relative">
         <div className="absolute inset-0 z-0">
@@ -76,14 +103,26 @@ export default function LibraryPage() {
           </div>
           <h1 className="text-4xl text-brand-900 font-serif mb-4">Members Library</h1>
           <p className="text-slate-600 mb-10 max-w-lg mx-auto text-lg leading-relaxed">
-            Access our exclusive collection of study materials, vocabulary lists, grammar guides, and practice tests. Sign in to unlock the materials.
+            {!user ? 
+              "Access our exclusive collection of study materials, vocabulary lists, grammar guides, and practice tests. Sign in to unlock the materials." :
+              "You need an active course package to access the members library. Purchase a course to unlock these resources."
+            }
           </p>
-          <button 
-            onClick={signInWithGoogle}
-            className="bg-brand-900 text-white px-8 py-4 text-xs font-bold uppercase tracking-wider rounded-md hover:bg-brand-800 transition-all shadow-xl shadow-brand-900/10"
-          >
-            Sign in with Google to Access
-          </button>
+          {!user ? (
+            <button 
+              onClick={signInWithGoogle}
+              className="bg-brand-900 text-white px-8 py-4 text-xs font-bold uppercase tracking-wider rounded-md hover:bg-brand-800 transition-all shadow-xl shadow-brand-900/10"
+            >
+              Sign in with Google to Access
+            </button>
+          ) : (
+             <Link 
+              to="/#pricing"
+              className="bg-brand-900 text-white px-8 py-4 text-xs inline-block font-bold uppercase tracking-wider rounded-md hover:bg-brand-800 transition-all shadow-xl shadow-brand-900/10"
+            >
+              View Packages & Pricing
+            </Link>
+          )}
         </div>
       </main>
     );
@@ -145,7 +184,10 @@ export default function LibraryPage() {
                            <h3 className="font-medium text-brand-900 mb-1">{item.title}</h3>
                            <p className="text-[10px] text-brand-500 uppercase tracking-wider">{item.type}</p>
                          </div>
-                         <button className="text-brand-400 hover:text-accent p-2 outline-none transition-colors">
+                         <button 
+                           onClick={() => alert(`Downloading ${item.title}...`)}
+                           className="text-brand-400 hover:text-accent p-2 outline-none transition-colors"
+                         >
                            <Download className="h-5 w-5" />
                          </button>
                        </motion.div>

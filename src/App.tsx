@@ -6,6 +6,7 @@ import ProficiencyTestPage from './ProficiencyTest';
 import CefrPage from './Cefr';
 import LibraryPage from './Library';
 import AdminDashboard from './AdminDashboard';
+import StudentDashboard from './StudentDashboard';
 import BookingPage from './BookingPage';
 import TermsPage from './TermsPage';
 import PrivacyPage from './PrivacyPage';
@@ -29,6 +30,8 @@ import {
   UserCheck,
   X
 } from 'lucide-react';
+import emailjs from '@emailjs/browser';
+import { auth, db } from './lib/firebase';
 
 function FadeIn({ children, delay = 0, className = "" }: { children: React.ReactNode, delay?: number, className?: string }) {
   return (
@@ -1256,20 +1259,34 @@ function ScrollToHash() {
 }
 
 function HomePage() {
+  const { signInWithGoogle } = useAuth();
   const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
   const [selectedPackage, setSelectedPackage] = useState<'starter' | 'pro' | 'elite' | 'payg' | null>(null);
   const [classDuration, setClassDuration] = useState<30 | 45 | 60>(60);
+  const [formStatus, setFormStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [checkoutState, setCheckoutState] = useState<{isOpen: boolean, plan: string, price: number, currency: string} | null>(null);
+
+  const currencies = [
+    { code: 'USD', symbol: '$', rate: 1 },
+    { code: 'EUR', symbol: '€', rate: 0.92 },
+    { code: 'GBP', symbol: '£', rate: 0.76 },
+    { code: 'ZAR', symbol: 'R', rate: 19.0 },
+  ];
+  const [currencyCode, setCurrencyCode] = useState('USD');
+  const currentCurrency = currencies.find(c => c.code === currencyCode) || currencies[0];
+
   const getPackagePrice = (pkg: string) => {
+    let basePrice = 0;
     switch (pkg) {
-      case 'payg': return classDuration === 30 ? 9 : classDuration === 45 ? 13.50 : 18;
-      case 'starter': return classDuration === 30 ? 75 : classDuration === 45 ? 112 : 149;
-      case 'pro': return classDuration === 30 ? 125 : classDuration === 45 ? 187 : 249;
-      case 'elite': return classDuration === 30 ? 200 : classDuration === 45 ? 300 : 399;
-      default: return 0;
+      case 'payg': basePrice = classDuration === 30 ? 9 : classDuration === 45 ? 13.50 : 18; break;
+      case 'starter': basePrice = classDuration === 30 ? 75 : classDuration === 45 ? 112 : 149; break;
+      case 'pro': basePrice = classDuration === 30 ? 125 : classDuration === 45 ? 187 : 249; break;
+      case 'elite': basePrice = classDuration === 30 ? 200 : classDuration === 45 ? 300 : 399; break;
     }
+    return Math.round(basePrice * currentCurrency.rate);
   };
 
   useEffect(() => {
@@ -1283,43 +1300,80 @@ function HomePage() {
   }, [location]);
 
   const handleCheckout = async (plan: string, price: number) => {
-    if (plan === 'Pay-As-You-Go') {
-      window.open('https://wise.com/pay/r/uJ5I4armHOGpuvc', '_blank');
-      return;
+    let currentUser = auth.currentUser;
+    if (!currentUser) {
+      await signInWithGoogle();
+      currentUser = auth.currentUser;
+      if (!currentUser) return; // User cancelled login
     }
-    
-    if (plan === 'Starter') {
-      window.open('https://wise.com/pay/r/yYlYOFCFR873Bmo', '_blank');
-      return;
-    }
-    
-    if (plan === 'Pro') {
-      window.open('https://wise.com/pay/r/7zqH2WPJ4kJTe-g', '_blank');
-      return;
-    }
-    
-    if (plan === 'Elite') {
-      window.open('https://wise.com/pay/r/_4qtb07Vc9Wfkw4', '_blank');
-      return;
-    }
-    
+
+    setCheckoutState({ isOpen: true, plan, price, currency: currentCurrency.code });
+  };
+
+  const processPayment = async (method: 'wise' | 'payoneer' | 'paypal', plan: string) => {
+    let currentUser = auth.currentUser;
+    if (!currentUser) return;
+
+    // Mark as purchased in Firestore
     try {
-      const response = await fetch('/api/create-checkout-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ plan, price }),
-      });
-      const data = await response.json();
-      if (data.url) {
-        window.location.href = data.url;
+      const { doc, getDoc, setDoc, serverTimestamp } = await import('firebase/firestore');
+      const userRef = doc(db, 'users', currentUser.uid);
+      const userSnapshot = await getDoc(userRef);
+      if (!userSnapshot.exists()) {
+        await setDoc(userRef, {
+          email: currentUser.email || '',
+          createdAt: serverTimestamp(),
+          hasPurchased: true
+        });
       } else {
-        alert('Checkout failed: ' + data.error);
+        await setDoc(userRef, { hasPurchased: true }, { merge: true });
       }
-    } catch (err) {
-      console.error(err);
-      alert('An error occurred. Please try again.');
+    } catch (e) {
+      console.error("Failed to update purchase status", e);
+    }
+    
+    setCheckoutState(null);
+
+    if (method === 'wise') {
+      if (plan.startsWith('Pay-As-You-Go')) {
+        window.open('https://wise.com/pay/r/bXPPy93FobB7Dgw', '_blank');
+        return;
+      }
+      
+      if (plan.startsWith('Starter')) {
+        window.open('https://wise.com/pay/r/nJ13cVSR0JFxcQc', '_blank');
+        return;
+      }
+      
+      if (plan.startsWith('Pro')) {
+        window.open('https://wise.com/pay/r/AKvOWDh1XYyrSy0', '_blank');
+        return;
+      }
+      
+      if (plan.startsWith('Elite')) {
+        window.open('https://wise.com/pay/r/KG_phkYafbivbu8', '_blank');
+        return;
+      }
+    } else if (method === 'payoneer') {
+      if (plan.startsWith('Starter')) {
+        window.open('https://link.payoneer.com/Token?t=5BDF5998E4C045E0B60ECDF7C2C10854&src=tpl', '_blank');
+        return;
+      }
+      if (plan.startsWith('Pro')) {
+        window.open('https://link.payoneer.com/Token?t=0BC7996767864F37B013D5C3D9E8E8C9&src=pl', '_blank');
+        return;
+      }
+      if (plan.startsWith('Elite')) {
+        window.open('https://link.payoneer.com/Token?t=0BC2EB462B1D466480025C37C5BB7528&src=pl', '_blank');
+        return;
+      }
+      window.location.href = `mailto:tebzaro12@gmail.com?subject=${encodeURIComponent(`Payoneer Payment for ${plan}`)}&body=${encodeURIComponent(`Hi, I would like to pay ${checkoutState?.currency} ${checkoutState?.price} for the ${plan} plan via Payoneer.`)}`;
+      alert("Please complete the payment via Payoneer. An email draft has been generated, or you can send payment directly to our Payoneer email.");
+      return;
+    } else if (method === 'paypal') {
+      window.open('https://www.paypal.com/myaccount/transfer/homepage', '_blank');
+      alert("Please send the payment to tebzaro12@gmail.com on PayPal and include the plan name in the notes.");
+      return;
     }
   };
 
@@ -1627,9 +1681,20 @@ function HomePage() {
                 <p className="text-3xl font-serif italic mb-2 text-white sm:text-4xl">
                   Investment Tiers
                 </p>
-                <p className="text-slate-400 text-sm tracking-wide">
-                  Choose the pace of your transformation.
-                </p>
+                <div className="flex flex-col sm:flex-row gap-4 mt-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-xs font-bold uppercase tracking-widest">Currency:</span>
+                    <select 
+                      value={currencyCode} 
+                      onChange={(e) => setCurrencyCode(e.target.value)}
+                      className="bg-brand-800 text-white border border-brand-700 text-xs px-2 py-1 rounded-sm focus:outline-none"
+                    >
+                      {currencies.map(c => (
+                        <option key={c.code} value={c.code}>{c.code} ({c.symbol})</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </FadeIn>
               <FadeIn delay={0.2} className="text-left md:text-right w-full md:w-auto">
                 <div className="flex bg-white/10 p-1 rounded-md mb-4 max-w-xs md:ml-auto">
@@ -1665,7 +1730,7 @@ function HomePage() {
                   </h3>
                 </div>
                 <div className="mb-4">
-                  <span className="text-2xl font-serif text-white">${getPackagePrice('payg')}</span>
+                  <span className="text-2xl font-serif text-white">{currentCurrency.symbol}{getPackagePrice('payg')}</span>
                   <span className="text-xs font-sans text-slate-400 font-normal">/class</span>
                 </div>
                 <ul className="text-[11px] text-slate-300 space-y-3 flex-grow mb-8">
@@ -1703,7 +1768,7 @@ function HomePage() {
                   </h3>
                 </div>
                 <div className="mb-4">
-                  <span className="text-2xl font-serif text-white">${getPackagePrice('starter')}</span>
+                  <span className="text-2xl font-serif text-white">{currentCurrency.symbol}{getPackagePrice('starter')}</span>
                   <span className="text-xs font-sans text-slate-400 font-normal">/month</span>
                 </div>
                 <ul className="text-[11px] text-slate-300 space-y-3 flex-grow mb-8">
@@ -1747,7 +1812,7 @@ function HomePage() {
                   </h3>
                 </div>
                 <div className="mb-4">
-                  <span className="text-2xl font-serif text-brand-900">${getPackagePrice('pro')}</span>
+                  <span className="text-2xl font-serif text-brand-900">{currentCurrency.symbol}{getPackagePrice('pro')}</span>
                   <span className="text-xs font-sans text-slate-500 font-normal">/month</span>
                 </div>
                 <ul className="text-[11px] text-slate-600 space-y-3 flex-grow mb-8">
@@ -1789,7 +1854,7 @@ function HomePage() {
                   </h3>
                 </div>
                 <div className="mb-4">
-                  <span className="text-2xl font-serif text-white">${getPackagePrice('elite')}</span>
+                  <span className="text-2xl font-serif text-white">{currentCurrency.symbol}{getPackagePrice('elite')}</span>
                   <span className="text-xs font-sans text-slate-400 font-normal">/month</span>
                 </div>
                 <ul className="text-[11px] text-slate-300 space-y-3 flex-grow mb-8">
@@ -1895,22 +1960,57 @@ function HomePage() {
                   Have questions about our programs, the CEFR framework, or need help finding the right course? Send us a message and we'll get back to you shortly.
                 </p>
                 <p className="text-brand-700 font-medium">
-                  Or email us directly at <a href="mailto:hello@lingoflight.com" className="text-brand-900 font-bold underline hover:text-accent transition-colors">hello@lingoflight.com</a>
+                  Call us at <a href="tel:+4407782336737" className="text-brand-900 font-bold underline hover:text-accent transition-colors">+44 07782 336737</a>, or email us directly at <a href="mailto:hello@lingoflight.co.za" className="text-brand-900 font-bold underline hover:text-accent transition-colors">hello@lingoflight.co.za</a> or <a href="mailto:hello@lingoflight.com" className="text-brand-900 font-bold underline hover:text-accent transition-colors">hello@lingoflight.com</a>
                 </p>
               </FadeIn>
             </div>
 
             <div className="max-w-xl mx-auto bg-brand-50/50 p-8 md:p-12 rounded-xl border border-brand-100 shadow-sm">
               <FadeIn delay={0.2}>
+                {formStatus === "success" ? (
+                  <div className="text-center py-8">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-100 mb-6">
+                      <Check className="h-8 w-8 text-brand-900" />
+                    </div>
+                    <h3 className="text-2xl font-serif text-brand-900 mb-2">Message Sent</h3>
+                    <p className="text-brand-600">Thank you for reaching out. We will get back to you shortly.</p>
+                    <button 
+                      onClick={() => setFormStatus("idle")}
+                      className="mt-8 text-sm font-bold text-brand-900 uppercase tracking-widest border-b-2 border-brand-900 pb-1 hover:text-accent hover:border-accent transition-colors"
+                    >
+                      Send Another Message
+                    </button>
+                  </div>
+                ) : (
                 <form className="space-y-6" onSubmit={(e) => {
                   e.preventDefault();
-                  const formData = new FormData(e.currentTarget);
-                  const name = formData.get('name');
-                  const email = formData.get('email');
-                  const subject = formData.get('subject');
-                  const message = formData.get('message');
-                  window.location.href = `mailto:hello@lingoflight.com?subject=${encodeURIComponent(String(subject))}&body=${encodeURIComponent(`Name: ${name}\nEmail: ${email}\n\nMessage:\n${message}`)}`;
+                  
+                  const serviceId = (import.meta as any).env.VITE_EMAILJS_SERVICE_ID;
+                  const templateId = (import.meta as any).env.VITE_EMAILJS_TEMPLATE_ID;
+                  const publicKey = (import.meta as any).env.VITE_EMAILJS_PUBLIC_KEY;
+
+                  if (!serviceId || !templateId || !publicKey) {
+                    alert("EmailJS is not configured. Please add the required environment variables.");
+                    return;
+                  }
+
+                  setFormStatus("submitting");
+
+                  emailjs.sendForm(serviceId, templateId, e.currentTarget, publicKey)
+                    .then((result) => {
+                        console.log(result.text);
+                        setFormStatus("success");
+                    }, (error) => {
+                        console.log(error.text);
+                        setFormStatus("error");
+                        alert("Failed to send message. Please try again later.");
+                    });
                 }}>
+                  {formStatus === "error" && (
+                    <div className="bg-red-50 text-red-600 p-4 rounded-md text-sm border border-red-100">
+                      There was an error sending your message. Please try again later.
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                       <label htmlFor="name" className="block text-[10px] font-bold uppercase tracking-wider text-brand-600 mb-2">Your Name</label>
@@ -1959,10 +2059,11 @@ function HomePage() {
                       placeholder="How can we help you?"
                     ></textarea>
                   </div>
-                  <button type="submit" className="w-full bg-brand-900 text-white font-bold text-xs uppercase tracking-wider px-8 py-4 rounded-md hover:bg-brand-800 transition-all shadow-xl shadow-brand-900/10">
-                    Send Message
+                  <button type="submit" disabled={formStatus === "submitting"} className="w-full bg-brand-900 text-white font-bold text-xs uppercase tracking-wider px-8 py-4 rounded-md hover:bg-brand-800 transition-all shadow-xl shadow-brand-900/10 disabled:opacity-50 disabled:cursor-not-allowed">
+                    {formStatus === "submitting" ? "Sending..." : "Send Message"}
                   </button>
                 </form>
+                )}
               </FadeIn>
             </div>
           </div>
@@ -2017,7 +2118,7 @@ function HomePage() {
                      
                      <div className="space-y-6">
                        <div className="bg-brand-50 rounded-lg p-5 border border-brand-100 mb-6">
-                           <p className="font-bold text-brand-900 text-center text-xl">${getPackagePrice('payg')} per class</p>
+                           <p className="font-bold text-brand-900 text-center text-xl">{currentCurrency.symbol}{getPackagePrice('payg')} per class</p>
                        </div>
 
                        <div>
@@ -2043,7 +2144,7 @@ function HomePage() {
                      <div className="border-b border-brand-100 pb-6 pr-12">
                        <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-brand-800 mb-2">Basic – "Starter English"</h3>
                        <p className="text-slate-500 text-sm italic">Best for: Casual learners & beginners building a foundation</p>
-                       <p className="text-brand-900 font-bold mt-3 text-lg">Price: ${getPackagePrice('starter')}/month</p>
+                       <p className="text-brand-900 font-bold mt-3 text-lg">Price: {currentCurrency.symbol}{getPackagePrice('starter')}/month</p>
                      </div>
                      
                      <div className="space-y-6">
@@ -2085,7 +2186,7 @@ function HomePage() {
                      
                      <div className="space-y-6">
                        <div className="bg-brand-50 rounded-lg p-5 border border-brand-100 mb-6">
-                           <p className="font-bold text-brand-900 text-center text-lg uppercase tracking-widest">${getPackagePrice('pro')}/month</p>
+                           <p className="font-bold text-brand-900 text-center text-lg uppercase tracking-widest">{currentCurrency.symbol}{getPackagePrice('pro')}/month</p>
                            <p className="font-bold text-brand-900 text-center text-sm mt-2">10 private lessons per month</p>
                        </div>
 
@@ -2121,7 +2222,7 @@ function HomePage() {
                      
                      <div className="space-y-6">
                        <div className="bg-brand-50 rounded-lg p-5 border border-brand-100 mb-6">
-                           <p className="font-bold text-brand-900 text-center text-lg uppercase tracking-widest">${getPackagePrice('elite')}/month</p>
+                           <p className="font-bold text-brand-900 text-center text-lg uppercase tracking-widest">{currentCurrency.symbol}{getPackagePrice('elite')}/month</p>
                            <p className="font-bold text-brand-900 text-center text-sm mt-2">18 private lessons per month</p>
                        </div>
 
@@ -2149,6 +2250,74 @@ function HomePage() {
                    </div>
                  )}
                </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Checkout Modal */}
+        <AnimatePresence>
+          {checkoutState?.isOpen && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-brand-900/40 backdrop-blur-sm"
+              onClick={() => setCheckoutState(null)}
+            >
+              <motion.div 
+                initial={{ y: 50, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 20, opacity: 0 }}
+                className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden relative"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between p-6 border-b border-brand-100 bg-brand-50/50">
+                  <h3 className="font-serif text-2xl text-brand-900">Payment Option</h3>
+                  <button onClick={() => setCheckoutState(null)} className="p-2 text-brand-400 hover:text-brand-900 transition-colors bg-white rounded-full shadow-sm hover:shadow">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                
+                <div className="p-6 space-y-4">
+                  <p className="text-sm text-brand-500 mb-6">
+                    You are booking <span className="font-bold text-brand-900">{checkoutState.plan}</span>.
+                    The total comes out to <span className="font-bold text-brand-900">{checkoutState.currency} {checkoutState.price}</span>. How would you like to pay?
+                  </p>
+
+                  <button 
+                    onClick={() => processPayment('wise', checkoutState.plan)}
+                    className="w-full flex items-center p-4 border block border-brand-200 rounded-lg hover:border-brand-500 hover:bg-brand-50 transition-all text-left group"
+                  >
+                    <div className="h-10 w-10 bg-brand-100 text-brand-700 flex items-center justify-center rounded-md font-bold text-lg mr-4 group-hover:bg-brand-900 group-hover:text-white transition-colors">W</div>
+                    <div>
+                      <h4 className="font-bold text-brand-900 font-sans">Wise Payment Link</h4>
+                      <p className="text-xs text-brand-500 mt-1">Pay quickly via Wise</p>
+                    </div>
+                  </button>
+
+                  <button 
+                    onClick={() => processPayment('payoneer', checkoutState.plan)}
+                    className="w-full flex items-center p-4 border block border-brand-200 rounded-lg hover:border-brand-500 hover:bg-[#FF4800]/5 transition-all text-left group"
+                  >
+                    <div className="h-10 w-10 bg-[#FF4800]/10 text-[#FF4800] flex items-center justify-center rounded-md font-bold text-lg mr-4 group-hover:bg-[#FF4800] group-hover:text-white transition-colors">P</div>
+                    <div>
+                      <h4 className="font-bold text-brand-900 font-sans">Payoneer</h4>
+                      <p className="text-xs text-brand-500 mt-1">Manual bank transfer to our Payoneer</p>
+                    </div>
+                  </button>
+
+                  <button 
+                    onClick={() => processPayment('paypal', checkoutState.plan)}
+                    className="w-full flex items-center p-4 border block border-brand-200 rounded-lg hover:border-brand-500 hover:bg-[#003087]/5 transition-all text-left group"
+                  >
+                    <div className="h-10 w-10 bg-[#003087]/10 text-[#003087] flex items-center justify-center rounded-md font-bold text-lg mr-4 group-hover:bg-[#003087] group-hover:text-white transition-colors">P</div>
+                    <div>
+                      <h4 className="font-bold text-brand-900 font-sans">PayPal</h4>
+                      <p className="text-xs text-brand-500 mt-1">Send money securely with PayPal</p>
+                    </div>
+                  </button>
+                </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -2221,7 +2390,7 @@ export default function App() {
               ))}
               {user ? (
                 <div className="flex items-center space-x-6">
-                  <Link to="/admin" className="hover:text-brand-900 transition-colors flex items-center gap-2">
+                  <Link to={user.email === 'tebzaro12@gmail.com' ? "/admin" : "/dashboard"} className="hover:text-brand-900 transition-colors flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-accent"></span>
                     Dashboard
                   </Link>
@@ -2231,7 +2400,7 @@ export default function App() {
                 <button onClick={signInWithGoogle} className="text-brand-800 border border-brand-200 px-4 py-2 rounded-sm hover:bg-brand-50 transition-colors">Student Login</button>
               )}
               <Link to="/book" className="bg-brand-900 text-white text-[11px] uppercase tracking-wider font-bold px-6 py-2.5 rounded-sm shadow-md shadow-brand-900/10 hover:bg-brand-800 transition-colors">
-                Book Free Demo
+                Book demo lesson
               </Link>
             </div>
 
@@ -2263,7 +2432,7 @@ export default function App() {
             ))}
             {user ? (
               <div className="border-t border-brand-100 pt-4 mt-2 mb-2">
-                <Link to="/admin" onClick={() => setMobileMenuOpen(false)} className="block text-[11px] uppercase tracking-[0.2em] font-semibold text-accent p-2 flex items-center gap-2">
+                <Link to={user.email === 'tebzaro12@gmail.com' ? "/admin" : "/dashboard"} onClick={() => setMobileMenuOpen(false)} className="block text-[11px] uppercase tracking-[0.2em] font-semibold text-accent p-2 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-accent"></span> Dashboard
                 </Link>
                 <button onClick={() => { logout(); setMobileMenuOpen(false); }} className="w-full text-left block text-[11px] uppercase tracking-[0.2em] font-semibold text-brand-900 p-2">Logout</button>
@@ -2274,11 +2443,11 @@ export default function App() {
               </div>
             )}
             <Link 
-              to="/book" 
+              to="/book"
               onClick={() => setMobileMenuOpen(false)}
-              className="block w-full text-center bg-accent text-white px-6 py-2.5 text-[11px] uppercase tracking-[0.2em] font-bold rounded-sm mt-4 shadow-lg shadow-accent/20"
+              className="block w-full text-center bg-brand-900 text-white px-6 py-2.5 text-[11px] uppercase tracking-[0.2em] font-bold rounded-sm mt-4 shadow-lg shadow-brand-900/10"
             >
-              Book Free Demo
+              Book demo lesson
             </Link>
           </motion.div>
         )}
@@ -2293,6 +2462,7 @@ export default function App() {
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/admin" element={<AdminDashboard />} />
+        <Route path="/dashboard" element={<StudentDashboard />} />
         <Route path="/:id" element={<CoursePage />} />
       </Routes>
 
@@ -2303,7 +2473,13 @@ export default function App() {
             <div className="flex flex-col items-center md:items-start gap-2">
               <span className="text-2xl font-serif italic text-white tracking-tight">Lingo Flight</span>
               <span className="text-brand-200/60 text-xs font-light max-w-xs text-center md:text-left mt-2 mb-2">Elevating your English proficiency for career and academic success.</span>
-              <a href="mailto:hello@lingoflight.com" className="text-brand-200 hover:text-white transition-colors text-sm">hello@lingoflight.com</a>
+              <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 items-center md:items-start text-sm">
+                <a href="tel:+4407782336737" className="text-brand-200 hover:text-white transition-colors">+44 07782 336737</a>
+                <span className="hidden sm:inline text-brand-200/40">|</span>
+                <a href="mailto:hello@lingoflight.co.za" className="text-brand-200 hover:text-white transition-colors">hello@lingoflight.co.za</a>
+                <span className="hidden sm:inline text-brand-200/40">|</span>
+                <a href="mailto:hello@lingoflight.com" className="text-brand-200 hover:text-white transition-colors">hello@lingoflight.com</a>
+              </div>
             </div>
             
             <div className="flex flex-wrap gap-x-8 gap-y-4 text-brand-200/60 text-[11px] uppercase tracking-wider font-semibold justify-center md:justify-start">
