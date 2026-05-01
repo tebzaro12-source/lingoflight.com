@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import emailjs from '@emailjs/browser';
 import { auth, db } from './lib/firebase';
+import { sendEmailNotification } from './lib/emailService';
 
 function FadeIn({ children, delay = 0, className = "" }: { children: React.ReactNode, delay?: number, className?: string }) {
   return (
@@ -1332,6 +1333,15 @@ function HomePage() {
       console.error("Failed to update purchase status", e);
     }
     
+    if (currentUser.email) {
+       await sendEmailNotification({
+          to_name: currentUser.displayName || 'Student',
+          to_email: currentUser.email,
+          subject: 'Lingo Flight - Payment Instructions',
+          message: `Thank you for selecting the ${plan} plan! We have received your payment request via ${method}.\n\nPlease ensure you complete the payment using the provided link to secure your learning journey.`
+       });
+    }
+
     setCheckoutState(null);
 
     if (method === 'wise') {

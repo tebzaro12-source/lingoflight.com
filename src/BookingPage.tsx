@@ -4,6 +4,7 @@ import { db } from './lib/firebase';
 import { collection, addDoc, serverTimestamp, doc, setDoc } from 'firebase/firestore';
 import { InlineWidget, useCalendlyEventListener } from "react-calendly";
 import { auth } from './lib/firebase';
+import { sendEmailNotification } from './lib/emailService';
 
 enum OperationType {
   CREATE = 'create',
@@ -67,6 +68,15 @@ export default function BookingPage() {
           status: 'pending',
           createdAt: serverTimestamp()
         });
+        
+        if (currentUser.email) {
+          await sendEmailNotification({
+            to_name: currentUser.displayName || 'Student',
+            to_email: currentUser.email,
+            subject: 'Lingo Flight - Booking Confirmation',
+            message: `Thank you for booking a session with Lingo Flight! Your booking has been recorded. Please check your email for the Calendly invitation and meeting link.`
+          });
+        }
         
         // Note: For email sending, Calendly handles the basic notification automatically,
         // but we keep the firestore record for the student dashboard.
